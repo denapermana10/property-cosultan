@@ -36,7 +36,12 @@ import {
   ShieldAlert, 
   ExternalLink,
   MessageCircle,
-  Database
+  Database,
+  Lock,
+  KeyRound,
+  LogOut,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 
 interface AdminDashboardProps {
@@ -50,6 +55,32 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   onRefresh,
   onExitAdmin
 }) => {
+  // Admin Panel Authentication State
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
+    return sessionStorage.getItem('rr_admin_auth') === 'true';
+  });
+  const [passwordInput, setPasswordInput] = useState('');
+  const [loginError, setLoginError] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+
+  const handleLoginSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (passwordInput === 'Bandung2026') {
+      setIsAuthenticated(true);
+      sessionStorage.setItem('rr_admin_auth', 'true');
+      setLoginError(false);
+      setPasswordInput('');
+    } else {
+      setLoginError(true);
+    }
+  };
+
+  const handleLogout = () => {
+    setIsAuthenticated(false);
+    sessionStorage.removeItem('rr_admin_auth');
+    onExitAdmin();
+  };
+
   const [activeAdminTab, setActiveAdminTab] = useState<'leads' | 'properties' | 'portfolio' | 'testimonials' | 'services' | 'gallery' | 'videos' | 'faqs' | 'blogs'>('leads');
 
   // Local data states
@@ -255,6 +286,136 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     URL.revokeObjectURL(url);
   };
 
+  // Handle Export Supabase PostgreSQL Schema & Data
+  const handleExportSupabaseSQL = () => {
+    const esc = (str: any) => str ? `'${String(str).replace(/'/g, "''").replace(/\\/g, "\\\\")}'` : 'NULL';
+    
+    let sql = `-- ==============================================================================\n`;
+    sql += `-- SUPABASE / POSTGRESQL RELATIONAL SCHEMA & DATA DUMP\n`;
+    sql += `-- Application: Dena Permana Property Consultant\n`;
+    sql += `-- Generated at: ${new Date().toISOString()}\n`;
+    sql += `-- Compatible with Supabase, PostgreSQL 15+, and Neon\n`;
+    sql += `-- ==============================================================================\n\n`;
+
+    sql += `-- Enable extensions\n`;
+    sql += `CREATE EXTENSION IF NOT EXISTS "uuid-ossp";\n`;
+    sql += `CREATE EXTENSION IF NOT EXISTS "pgcrypto";\n\n`;
+
+    // 1. PROFILES
+    sql += `CREATE TABLE IF NOT EXISTS public.profiles (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), email VARCHAR(255) UNIQUE NOT NULL, full_name VARCHAR(255) NOT NULL DEFAULT 'Dena Permana', role VARCHAR(50) NOT NULL DEFAULT 'admin', avatar_url TEXT, phone VARCHAR(50) DEFAULT '081324421411', bio TEXT, created_at TIMESTAMPTZ DEFAULT now());\n`;
+    sql += `INSERT INTO public.profiles (email, full_name, role, avatar_url, phone, bio) VALUES ('denapermana151690@gmail.com', 'Dena Permana', 'admin', 'https://lh3.googleusercontent.com/d/1VHoJt9mUv5rhUfd1h-P0ZOLL0hEjRL4P=s1000?authuser=0', '081324421411', 'Senior Property Consultant Bandung Raya') ON CONFLICT DO NOTHING;\n\n`;
+
+    // 2. PROPERTIES
+    sql += `CREATE TABLE IF NOT EXISTS public.properties (id VARCHAR(50) PRIMARY KEY, title VARCHAR(255) NOT NULL, price_display VARCHAR(100), price_numeric NUMERIC(15, 2) DEFAULT 0, location VARCHAR(255), cluster VARCHAR(255), developer VARCHAR(255), status VARCHAR(50), property_type VARCHAR(100), land_area INT DEFAULT 0, building_area INT DEFAULT 0, bedrooms INT DEFAULT 0, bathrooms INT DEFAULT 0, carport INT DEFAULT 1, description TEXT, features JSONB DEFAULT '[]'::jsonb, is_featured BOOLEAN DEFAULT true, created_at TIMESTAMPTZ DEFAULT now());\n`;
+    properties.forEach(p => {
+      sql += `INSERT INTO public.properties (id, title, price_display, price_numeric, location, cluster, developer, status, property_type, land_area, building_area, bedrooms, bathrooms, carport, description, features, is_featured) VALUES (${esc(p.id)}, ${esc(p.title)}, ${esc(p.price)}, ${p.priceNumeric || 0}, ${esc(p.location)}, ${esc(p.cluster || '')}, ${esc(p.developer || '')}, ${esc(p.status)}, ${esc(p.type)}, ${p.lt || 0}, ${p.lb || 0}, ${p.bedrooms || 0}, ${p.bathrooms || 0}, ${p.carport || 1}, ${esc(p.description)}, ${esc(JSON.stringify(p.features || []))}::jsonb, ${p.isFeatured ? 'true' : 'false'}) ON CONFLICT (id) DO UPDATE SET title = EXCLUDED.title;\n`;
+    });
+    sql += `\n`;
+
+    // 3. PROPERTY_IMAGES
+    sql += `CREATE TABLE IF NOT EXISTS public.property_images (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), property_id VARCHAR(50) NOT NULL REFERENCES public.properties(id) ON DELETE CASCADE, image_url TEXT NOT NULL, caption VARCHAR(255), is_primary BOOLEAN DEFAULT false, created_at TIMESTAMPTZ DEFAULT now());\n`;
+    properties.forEach(p => {
+      if (p.images && p.images.length > 0) {
+        p.images.forEach((imgUrl, idx) => {
+          sql += `INSERT INTO public.property_images (property_id, image_url, caption, is_primary) VALUES (${esc(p.id)}, ${esc(imgUrl)}, ${esc(p.title)}, ${idx === 0 ? 'true' : 'false'});\n`;
+        });
+      }
+    });
+    sql += `\n`;
+
+    // 4. PORTFOLIO
+    sql += `CREATE TABLE IF NOT EXISTS public.portfolio (id VARCHAR(50) PRIMARY KEY, title VARCHAR(255) NOT NULL, category VARCHAR(100), location VARCHAR(255), project_year VARCHAR(20), client_name VARCHAR(255), image_url TEXT, impact_summary TEXT, project_url TEXT, created_at TIMESTAMPTZ DEFAULT now());\n`;
+    portfolio.forEach(p => {
+      sql += `INSERT INTO public.portfolio (id, title, category, location, project_year, client_name, image_url, impact_summary, project_url) VALUES (${esc(p.id)}, ${esc(p.title)}, ${esc(p.category)}, ${esc(p.location)}, ${esc(p.year)}, ${esc(p.client)}, ${esc(p.image || p.imageUrl)}, ${esc(p.impact || '')}, ${esc(p.projectUrl || '')}) ON CONFLICT (id) DO UPDATE SET title = EXCLUDED.title;\n`;
+    });
+    sql += `\n`;
+
+    // 5. SERVICES
+    sql += `CREATE TABLE IF NOT EXISTS public.services (id VARCHAR(50) PRIMARY KEY, title VARCHAR(255) NOT NULL, short_desc TEXT, full_desc TEXT, icon_name VARCHAR(100), features JSONB DEFAULT '[]'::jsonb, cta_text VARCHAR(100), price_start VARCHAR(100), created_at TIMESTAMPTZ DEFAULT now());\n`;
+    services.forEach(s => {
+      sql += `INSERT INTO public.services (id, title, short_desc, full_desc, icon_name, features, cta_text, price_start) VALUES (${esc(s.id)}, ${esc(s.title)}, ${esc(s.desc || s.shortDesc)}, ${esc(s.fullDesc || s.desc)}, ${esc(s.icon || 'home')}, ${esc(JSON.stringify(s.features || []))}::jsonb, ${esc(s.ctaText)}, ${esc(s.priceStart || '')}) ON CONFLICT (id) DO UPDATE SET title = EXCLUDED.title;\n`;
+    });
+    sql += `\n`;
+
+    // 6. GALLERY
+    sql += `CREATE TABLE IF NOT EXISTS public.gallery (id VARCHAR(50) PRIMARY KEY, title VARCHAR(255) NOT NULL, category VARCHAR(100), image_url TEXT, description TEXT, event_date VARCHAR(50), created_at TIMESTAMPTZ DEFAULT now());\n`;
+    gallery.forEach(g => {
+      sql += `INSERT INTO public.gallery (id, title, category, image_url, description, event_date) VALUES (${esc(g.id)}, ${esc(g.title)}, ${esc(g.category)}, ${esc(g.image || g.imageUrl)}, ${esc(g.description || '')}, ${esc(g.date || '')}) ON CONFLICT (id) DO UPDATE SET title = EXCLUDED.title;\n`;
+    });
+    sql += `\n`;
+
+    // 7. VIDEOS
+    sql += `CREATE TABLE IF NOT EXISTS public.videos (id VARCHAR(50) PRIMARY KEY, title VARCHAR(255) NOT NULL, platform VARCHAR(50), video_id VARCHAR(100), thumbnail_url TEXT, views_count VARCHAR(50), published_date VARCHAR(50), created_at TIMESTAMPTZ DEFAULT now());\n`;
+    videos.forEach(v => {
+      sql += `INSERT INTO public.videos (id, title, platform, video_id, thumbnail_url, views_count, published_date) VALUES (${esc(v.id)}, ${esc(v.title)}, ${esc(v.platform || 'YouTube')}, ${esc(v.videoId || '')}, ${esc(v.thumbnail || '')}, ${esc(v.views || '')}, ${esc(v.date || '')}) ON CONFLICT (id) DO UPDATE SET title = EXCLUDED.title;\n`;
+    });
+    sql += `\n`;
+
+    // 8. BLOG_POSTS
+    sql += `CREATE TABLE IF NOT EXISTS public.blog_posts (id VARCHAR(50) PRIMARY KEY, title VARCHAR(255) NOT NULL, category VARCHAR(100), published_date VARCHAR(50), read_time VARCHAR(50), author_name VARCHAR(255), image_url TEXT, summary TEXT, content TEXT, tags JSONB DEFAULT '[]'::jsonb, views_count INT DEFAULT 0, created_at TIMESTAMPTZ DEFAULT now());\n`;
+    blogs.forEach(b => {
+      const authorName = typeof b.author === 'string' ? b.author : b.author?.name || 'Dena Permana';
+      sql += `INSERT INTO public.blog_posts (id, title, category, published_date, read_time, author_name, image_url, summary, content, tags, views_count) VALUES (${esc(b.id)}, ${esc(b.title)}, ${esc(b.category)}, ${esc(b.date)}, ${esc(b.readTime)}, ${esc(authorName)}, ${esc(b.image)}, ${esc(b.summary || b.excerpt)}, ${esc(b.content)}, ${esc(JSON.stringify(b.tags || []))}::jsonb, ${b.views || 0}) ON CONFLICT (id) DO UPDATE SET title = EXCLUDED.title;\n`;
+    });
+    sql += `\n`;
+
+    // 9. TESTIMONIALS
+    sql += `CREATE TABLE IF NOT EXISTS public.testimonials (id VARCHAR(50) PRIMARY KEY, client_name VARCHAR(255) NOT NULL, client_role VARCHAR(255), property_purchased VARCHAR(255), rating INT DEFAULT 5, comment TEXT, photo_url TEXT, testimonial_date VARCHAR(50), created_at TIMESTAMPTZ DEFAULT now());\n`;
+    testimonials.forEach(t => {
+      sql += `INSERT INTO public.testimonials (id, client_name, client_role, property_purchased, rating, comment, photo_url, testimonial_date) VALUES (${esc(t.id)}, ${esc(t.name)}, ${esc(t.role)}, ${esc(t.property || '')}, ${t.rating || 5}, ${esc(t.comment)}, ${esc(t.photo)}, ${esc(t.date)}) ON CONFLICT (id) DO UPDATE SET client_name = EXCLUDED.client_name;\n`;
+    });
+    sql += `\n`;
+
+    // 10. CONTACTS & LEADS
+    sql += `CREATE TABLE IF NOT EXISTS public.contacts (id VARCHAR(50) PRIMARY KEY, name VARCHAR(255) NOT NULL, phone VARCHAR(50), email VARCHAR(255), location_interest VARCHAR(255), budget_range VARCHAR(100), message TEXT, source VARCHAR(100), status VARCHAR(50), date VARCHAR(50), created_at TIMESTAMPTZ DEFAULT now());\n`;
+    leads.forEach(l => {
+      sql += `INSERT INTO public.contacts (id, name, phone, email, location_interest, budget_range, message, source, status, date) VALUES (${esc(l.id)}, ${esc(l.name)}, ${esc(l.phone)}, ${esc(l.email)}, ${esc(l.location)}, ${esc(l.budget)}, ${esc(l.message)}, ${esc(l.source)}, ${esc(l.status)}, ${esc(l.date)}) ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name;\n`;
+    });
+    sql += `CREATE OR REPLACE VIEW public.leads AS SELECT * FROM public.contacts;\n\n`;
+
+    // 11. FAQS
+    sql += `CREATE TABLE IF NOT EXISTS public.faqs (id VARCHAR(50) PRIMARY KEY, question TEXT NOT NULL, answer TEXT NOT NULL, category VARCHAR(100), created_at TIMESTAMPTZ DEFAULT now());\n`;
+    faqs.forEach(f => {
+      sql += `INSERT INTO public.faqs (id, question, answer, category) VALUES (${esc(f.id)}, ${esc(f.q || f.question)}, ${esc(f.a || f.answer)}, ${esc(f.category || 'Umum')}) ON CONFLICT (id) DO UPDATE SET question = EXCLUDED.question;\n`;
+    });
+    sql += `\n`;
+
+    // Enable RLS
+    sql += `-- Enable RLS on all tables\n`;
+    sql += `ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;\n`;
+    sql += `ALTER TABLE public.properties ENABLE ROW LEVEL SECURITY;\n`;
+    sql += `ALTER TABLE public.property_images ENABLE ROW LEVEL SECURITY;\n`;
+    sql += `ALTER TABLE public.portfolio ENABLE ROW LEVEL SECURITY;\n`;
+    sql += `ALTER TABLE public.services ENABLE ROW LEVEL SECURITY;\n`;
+    sql += `ALTER TABLE public.gallery ENABLE ROW LEVEL SECURITY;\n`;
+    sql += `ALTER TABLE public.videos ENABLE ROW LEVEL SECURITY;\n`;
+    sql += `ALTER TABLE public.blog_posts ENABLE ROW LEVEL SECURITY;\n`;
+    sql += `ALTER TABLE public.testimonials ENABLE ROW LEVEL SECURITY;\n`;
+    sql += `ALTER TABLE public.contacts ENABLE ROW LEVEL SECURITY;\n`;
+    sql += `ALTER TABLE public.faqs ENABLE ROW LEVEL SECURITY;\n\n`;
+    sql += `-- Public read access policies\n`;
+    sql += `CREATE POLICY "Public read properties" ON public.properties FOR SELECT USING (true);\n`;
+    sql += `CREATE POLICY "Public read property_images" ON public.property_images FOR SELECT USING (true);\n`;
+    sql += `CREATE POLICY "Public read portfolio" ON public.portfolio FOR SELECT USING (true);\n`;
+    sql += `CREATE POLICY "Public read services" ON public.services FOR SELECT USING (true);\n`;
+    sql += `CREATE POLICY "Public read gallery" ON public.gallery FOR SELECT USING (true);\n`;
+    sql += `CREATE POLICY "Public read videos" ON public.videos FOR SELECT USING (true);\n`;
+    sql += `CREATE POLICY "Public read blog_posts" ON public.blog_posts FOR SELECT USING (true);\n`;
+    sql += `CREATE POLICY "Public read testimonials" ON public.testimonials FOR SELECT USING (true);\n`;
+    sql += `CREATE POLICY "Public read faqs" ON public.faqs FOR SELECT USING (true);\n`;
+    sql += `CREATE POLICY "Public insert contacts" ON public.contacts FOR INSERT WITH CHECK (true);\n`;
+
+    const blob = new Blob([sql], { type: 'text/sql;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `Supabase_PostgreSQL_Schema_${new Date().toISOString().slice(0, 10)}.sql`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   // Handle Add Property Submit
   const handleAddPropertySubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -388,6 +549,78 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     alert("Artikel blog berhasil diterbitkan!");
   };
 
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-[80vh] flex items-center justify-center px-4 py-12">
+        <div className="max-w-md w-full bg-white dark:bg-gray-900 rounded-3xl shadow-2xl border border-gray-200 dark:border-gray-800 p-8 space-y-6">
+          <div className="text-center space-y-3">
+            <div className="w-16 h-16 bg-gradient-to-br from-emerald-500 to-emerald-700 rounded-2xl flex items-center justify-center mx-auto text-white shadow-lg shadow-emerald-500/20">
+              <Lock className="w-8 h-8" />
+            </div>
+            <h2 className="font-heading font-extrabold text-2xl text-gray-900 dark:text-white">
+              Admin Panel Login
+            </h2>
+            <p className="text-sm text-gray-600 dark:text-gray-400">
+              Khusus pengelola <strong className="text-emerald-600 dark:text-emerald-400">Dena Permana</strong>. Masukkan kata sandi untuk mengakses data properti & prospek.
+            </p>
+          </div>
+
+          <form onSubmit={handleLoginSubmit} className="space-y-4">
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-gray-700 dark:text-gray-300 uppercase tracking-wider block">
+                Kata Sandi Keamanan
+              </label>
+              <div className="relative">
+                <input
+                  type={showPassword ? "text" : "password"}
+                  value={passwordInput}
+                  onChange={(e) => {
+                    setPasswordInput(e.target.value);
+                    if (loginError) setLoginError(false);
+                  }}
+                  placeholder="Masukkan kata sandi admin..."
+                  className="w-full bg-gray-50 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-xl px-4 py-3 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500 pr-10 font-mono"
+                  required
+                  autoFocus
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+                >
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+              {loginError && (
+                <p className="text-xs text-red-500 font-medium flex items-center gap-1.5 mt-1.5">
+                  <ShieldAlert className="w-3.5 h-3.5 shrink-0" />
+                  <span>Kata sandi salah! Silakan periksa kembali.</span>
+                </p>
+              )}
+            </div>
+
+            <button
+              type="submit"
+              className="w-full bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-700 hover:to-emerald-800 text-white font-bold text-sm py-3 px-6 rounded-xl shadow-lg shadow-emerald-600/30 transition flex items-center justify-center gap-2"
+            >
+              <KeyRound className="w-4 h-4" />
+              <span>Masuk Admin Panel</span>
+            </button>
+          </form>
+
+          <div className="pt-4 border-t border-gray-200 dark:border-gray-800 text-center">
+            <button
+              onClick={onExitAdmin}
+              className="text-xs font-bold text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition"
+            >
+              ← Kembali ke Beranda Website
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
       
@@ -423,7 +656,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             title="Download seluruh data website (Properti, Leads, Blog, dll) dalam format SQL siap impor ke MySQL/PostgreSQL"
           >
             <Database className="w-4 h-4" />
-            <span>Export SQL Database (.SQL)</span>
+            <span>Export MySQL (.SQL)</span>
+          </button>
+
+          <button
+            onClick={handleExportSupabaseSQL}
+            className="flex items-center gap-2 bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs px-4 py-2.5 rounded-xl shadow transition"
+            title="Download PostgreSQL / Supabase Schema lengkap dengan RLS, Foreign Keys, UUID, dan data aktif"
+          >
+            <Database className="w-4 h-4" />
+            <span>Export Supabase (.SQL)</span>
           </button>
 
           <button
@@ -432,6 +674,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           >
             <RefreshCw className="w-4 h-4" />
             <span>Reset Demo Data</span>
+          </button>
+
+          <button
+            onClick={handleLogout}
+            className="flex items-center gap-2 bg-red-600/30 hover:bg-red-600 text-red-300 hover:text-white font-bold text-xs px-4 py-2.5 rounded-xl transition border border-red-500/40"
+            title="Kunci sesi admin panel"
+          >
+            <LogOut className="w-4 h-4" />
+            <span>Kunci Admin</span>
           </button>
 
           <button
